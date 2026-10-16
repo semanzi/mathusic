@@ -1,0 +1,8 @@
+numpy>=1.24
+sympy>=1.12
+# PySide6 6.11 and later release references to None incorrectly, which aborts
+# Python 3.10 and 3.11 during plot repainting. Raise this bound once fixed upstream.
+PySide6>=6.5,<6.11
+pyqtgraph>=0.13.3
+sounddevice>=0.4.6
+pytest>=7.0

@@ -1,0 +1,23 @@
+# Virtual environments (recreate with: pip install -r requirements.txt)
+.venv/
+venv/
+
+# Python caches and build output
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Test and tool caches
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Audio and MIDI exported from the app
+*.wav
+*.mid
+
+# Operating system clutter
+.DS_Store
+Thumbs.db
