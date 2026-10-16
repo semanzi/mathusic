@@ -32,7 +32,7 @@ pip install -r requirements.txt
 
 Press F5, or open the Run and Debug panel and choose **Run Equation Melody**. The launch configuration in `.vscode/launch.json` starts `app.py` in the integrated terminal. Opening `app.py` and pressing the Run button in the editor's top right corner also works. From a terminal, run `python app.py`.
 
-To run the engine tests, open the Testing panel (the flask icon) or run `pytest` in the terminal. The tests cover parsing, slider role inference, every normalisation mode, rests, synthesis and MIDI export, and need neither a display nor an audio device.
+To run the engine tests, open the Testing panel (the flask icon) or run `pytest` in the terminal. The tests cover parsing, slider role inference, every normalisation mode, rests, chord progressions and voice leading, synthesis and MIDI export, and need neither a display nor an audio device.
 
 ## Using the application
 
@@ -68,6 +68,16 @@ A parameter marked **no audible effect** does not change any note when moved acr
 
 These settings sit below the parameters and shape how the equation is heard. Number of notes, the starting value of `n` and the step size between notes together decide which stretch of the equation becomes the melody. A step size of 0.1 reveals fine detail in a slowly changing curve, while a large step can turn a smooth wave into something more angular through sampling effects. Root note, scale and octave range decide the available pitches. Tempo, note length and gate decide timing, and sustaining repeated notes lets rhythm emerge from plateaux in the equation.
 
+Every scale has seven notes: Major, Natural minor, Harmonic minor, Dorian and Mixolydian.
+
+### Harmony
+
+The Harmony group adds a chord progression beneath the melody, played as a soft sustained pad. The default, None, adds nothing. The progressions on offer are a drone on the root, I–V–vi–IV, I–IV–V–I, ii–V–I, the circle of fifths within the key (I–IV–vii°–iii–vi–ii–V–I) and a modulating circle of fifths.
+
+Chords are built by stacking thirds within the selected scale, so each scale gives its own chord qualities. In harmonic minor, for example, V is major and III is augmented, while in Dorian IV is major. The modulating circle instead plays major chords on roots rising by fifths (C, G, D, A and so on through all twelve keys). The melody stays in the original key, so clashes are part of the effect. Each chord is voiced as the inversion nearest the previous one, so no voice moves by more than a major third.
+
+Everything is in 4/4 time. Chords last half a bar, one bar or two bars, and the progression repeats for the length of the loop. When the loop does not hold a whole number of chords, the last chord is cut short and the status line suggests a note count that fits. Chord octave sets the register relative to the root note, and chord volume sets the pad's level relative to the melody. The piano roll shows the chords as pale bars behind the melody, and MIDI export writes them on channel 2.
+
 ### Normalisation modes
 
 All three modes first divide by the largest magnitude, so equations producing extremely large or small numbers behave like any other. Values that are undefined, such as a logarithm of a negative number or a division by zero, become rests and are marked with a red cross on the top plot.
@@ -89,15 +99,17 @@ equation-melody/
 │   ├── state.py               musical settings
 │   ├── core/
 │   │   ├── expression.py      safe parsing and slider role inference
+│   │   ├── scales.py          seven-note scales
 │   │   ├── melody.py          sampling, normalisation, quantisation, notes
+│   │   ├── harmony.py         chord progressions and voice leading
 │   │   ├── synth.py           additive oscillators and envelopes
-│   │   └── export.py          WAV and MIDI writers
+│   │   └── export.py          WAV and MIDI writers (melody on channel 1, chords on channel 2)
 │   ├── audio/
 │   │   └── player.py          looping playback with live buffer swapping
 │   └── gui/
 │       ├── main_window.py     layout and coordination
 │       ├── param_panel.py     adaptive sliders
-│       ├── settings_panel.py  musical settings
+│       ├── settings_panel.py  musical and harmony settings
 │       └── plots.py           equation, piano roll and waveform views
 └── tests/
     └── test_core.py

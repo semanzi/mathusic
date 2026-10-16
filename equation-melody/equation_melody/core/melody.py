@@ -8,25 +8,14 @@ treated as rests rather than errors, so any equation remains playable.
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Callable, Sequence
 
 import numpy as np
 
 from ..state import MusicSettings
-
-SCALES: dict[str, tuple[int, ...]] = {
-    "Major": (0, 2, 4, 5, 7, 9, 11),
-    "Natural minor": (0, 2, 3, 5, 7, 8, 10),
-    "Harmonic minor": (0, 2, 3, 5, 7, 8, 11),
-    "Dorian": (0, 2, 3, 5, 7, 9, 10),
-    "Mixolydian": (0, 2, 4, 5, 7, 9, 10),
-    "Major pentatonic": (0, 2, 4, 7, 9),
-    "Minor pentatonic": (0, 3, 5, 7, 10),
-    "Blues": (0, 3, 5, 6, 7, 10),
-    "Whole tone": (0, 2, 4, 6, 8, 10),
-    "Chromatic": tuple(range(12)),
-}
+from .harmony import ChordEvent, build_chords
+from .scales import SCALES
 
 NORMALISATION_MODES = ("Percentile (robust)", "Median / MAD", "Rank (quantile)")
 
@@ -66,6 +55,7 @@ class Melody:
     events: list[NoteEvent]
     total_beats: float
     settings: MusicSettings
+    chords: list[ChordEvent] = field(default_factory=list)
 
 
 def index_values(settings: MusicSettings) -> np.ndarray:
@@ -198,9 +188,11 @@ def build_melody(func: Callable[..., object], values: Sequence[float],
     y = sample(func, n, values)
     norm = normalise(y, settings.normalisation, settings.clip_percent)
     pitches = quantise(norm.z, settings)
+    total_beats = len(n) * settings.note_beats
     return Melody(n=n, y=y, normalisation=norm, pitches=pitches,
                   events=to_events(pitches, settings),
-                  total_beats=len(n) * settings.note_beats, settings=settings)
+                  total_beats=total_beats, settings=settings,
+                  chords=build_chords(settings, total_beats))
 
 
 def probe_influence(func: Callable[..., object], values: Sequence[float],

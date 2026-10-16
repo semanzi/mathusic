@@ -2,14 +2,18 @@
 
 import math
 import struct
+from dataclasses import replace
 
 import numpy as np
 import pytest
 
 from equation_melody.core.expression import EquationError, parse_equation
 from equation_melody.core.export import midi_bytes
+from equation_melody.core.harmony import (
+    MODULATING, PROGRESSIONS, build_chords, loop_fit_message, triad_classes,
+)
 from equation_melody.core.melody import (
-    NORMALISATION_MODES, REST, build_melody, normalise, probe_influence, scale_pitches,
+    NORMALISATION_MODES, REST, SCALES, build_melody, normalise, probe_influence, scale_pitches,
 )
 from equation_melody.core.synth import render_audio
 from equation_melody.state import MusicSettings
@@ -129,7 +133,7 @@ def test_all_undefined_is_handled():
 # Melody -----------------------------------------------------------------------
 
 def test_notes_stay_in_scale_and_range():
-    settings = MusicSettings(num_notes=64, scale="Minor pentatonic", octaves=3)
+    settings = MusicSettings(num_notes=64, scale="Dorian", octaves=3)
     parsed = parse_equation("sin(a*n) + b*sin(c*n)")
     melody = build_melody(parsed.func, [0.7, 0.5, 2.1], settings)
     allowed = set(scale_pitches(settings))
@@ -164,6 +168,82 @@ def test_probe_flags_parameters_absorbed_by_normalisation():
     assert flags == {"a": False, "c": False, "w": True}
 
 
+def test_only_seven_note_scales_remain():
+    assert list(SCALES) == ["Major", "Natural minor", "Harmonic minor", "Dorian", "Mixolydian"]
+    assert all(len(intervals) == 7 for intervals in SCALES.values())
+    assert MusicSettings().scale == "Major"
+
+
+# Harmony ----------------------------------------------------------------------
+
+IN_KEY = [name for name in PROGRESSIONS if name not in ("None", MODULATING)]
+
+
+def test_no_progression_adds_nothing():
+    settings = MusicSettings()
+    melody = build_melody(parse_equation("sin(n)").func, [], settings)
+    assert settings.progression == "None" and melody.chords == []
+    louder = MusicSettings(chord_volume=1.0, chord_octave=0, chord_beats=2.0)
+    other = build_melody(parse_equation("sin(n)").func, [], louder)
+    assert np.array_equal(render_audio(melody, settings), render_audio(other, louder))
+    assert midi_bytes(melody, settings) == midi_bytes(other, louder)
+
+
+@pytest.mark.parametrize("scale", list(SCALES))
+@pytest.mark.parametrize("progression", IN_KEY)
+def test_in_key_progressions_use_only_scale_notes(progression, scale):
+    settings = MusicSettings(progression=progression, scale=scale, root=62, num_notes=64)
+    classes = {(settings.root + i) % 12 for i in SCALES[scale]}
+    chords = build_chords(settings, 32.0)
+    assert chords and all(len(c.pitches) == 3 for c in chords)
+    assert {p % 12 for c in chords for p in c.pitches} <= classes
+
+
+def test_triads_follow_the_scale():
+    def quality(scale, degree):
+        settings = MusicSettings(progression="I–V–vi–IV", scale=scale, root=60)
+        root, third, fifth = (settings.root + SCALES[scale][(degree + k) % 7] for k in (0, 2, 4))
+        return ((third - root) % 12, (fifth - root) % 12)
+    assert quality("Major", 4) == (4, 7)  # V major
+    assert quality("Natural minor", 4) == (3, 7)  # v minor
+    assert quality("Harmonic minor", 4) == (4, 7)  # V major
+    assert quality("Harmonic minor", 2) == (4, 8)  # III augmented
+    assert quality("Dorian", 3) == (4, 7)  # IV major
+    settings = MusicSettings(progression="I–IV–V–I", scale="Harmonic minor", root=60)
+    assert set(triad_classes(settings, 2)) == {7, 11, 2}  # G B D
+
+
+def test_modulating_circle_roots_rise_by_fifths():
+    settings = MusicSettings(progression=MODULATING, root=60)
+    roots = [triad_classes(settings, i)[0] for i in range(13)]
+    assert all((b - a) % 12 == 7 for a, b in zip(roots, roots[1:]))
+    assert len(set(roots)) == 12
+    for i in range(12):
+        root, third, fifth = triad_classes(settings, i)
+        assert ((third - root) % 12, (fifth - root) % 12) == (4, 7)
+
+
+@pytest.mark.parametrize("progression", IN_KEY + [MODULATING])
+def test_voice_leading_moves_in_small_steps_and_stays_in_register(progression):
+    settings = MusicSettings(progression=progression, num_notes=192)
+    chords = build_chords(settings, 96.0)
+    centre = settings.root + 12 * settings.chord_octave
+    for previous, chord in zip(chords, chords[1:]):  # no voice moves more than a major third
+        assert max(abs(a - b) for a, b in zip(previous.pitches, chord.pitches)) <= 4
+    assert all(centre - 6 <= c.pitches[0] < centre + 6 for c in chords)
+
+
+def test_chords_fill_the_loop_and_the_last_is_cut_short():
+    settings = MusicSettings(progression="ii–V–I", num_notes=30, note_beats=0.5,
+                             chord_beats=4.0)
+    chords = build_chords(settings, 15.0)
+    assert [c.start for c in chords] == [0.0, 4.0, 8.0, 12.0]
+    assert chords[-1].duration == pytest.approx(3.0)
+    assert "multiple of 8 notes" in loop_fit_message(settings)
+    assert loop_fit_message(MusicSettings(progression="ii–V–I", num_notes=32)) is None
+    assert loop_fit_message(MusicSettings(num_notes=30)) is None
+
+
 # Audio and export ---------------------------------------------------------------
 
 def test_audio_length_matches_loop_and_is_bounded():
@@ -182,3 +262,53 @@ def test_midi_file_structure():
     assert data[:4] == b"MThd" and data[14:18] == b"MTrk"
     assert struct.unpack(">I", data[18:22])[0] == len(data) - 22
     assert data.endswith(b"\xff\x2f\x00")
+
+
+@pytest.mark.parametrize("volume", [0.0, 0.4, 1.0])
+def test_audio_with_chords_is_bounded_and_melody_stays_on_top(volume):
+    settings = MusicSettings(num_notes=16, progression="I–V–vi–IV", chord_volume=volume,
+                             chord_beats=2.0)
+    melody = build_melody(parse_equation("sin(n)").func, [], settings)
+    audio = render_audio(melody, settings, 44100)
+    assert len(audio) == int(math.ceil(16 * 0.5 * 0.5 * 44100))
+    assert np.max(np.abs(audio)) <= 0.8 + 1e-6
+    chords_only = build_melody(parse_equation("log(-1 - n)").func, [], settings)
+    assert not chords_only.events
+    pad = render_audio(chords_only, replace(settings, chord_volume=1.0), 44100)
+    assert np.all(np.isfinite(pad)) and len(pad) == len(audio)
+
+
+def test_short_loop_with_long_pad_release_wraps_cleanly():
+    settings = MusicSettings(num_notes=4, note_beats=0.25, tempo=300, progression="Drone (I)",
+                             chord_beats=2.0)
+    melody = build_melody(parse_equation("sin(n)").func, [], settings)
+    audio = render_audio(melody, settings, 44100)
+    assert len(audio) == int(math.ceil(4 * 0.25 * 0.2 * 44100))
+    assert np.max(np.abs(audio)) <= 0.8 + 1e-6
+
+
+def _midi_messages(data):
+    """Decode the note messages of the single track written by midi_bytes."""
+    track, i, messages = data[22:], 7, []  # skip the tempo event
+    while i < len(track):
+        while track[i] & 0x80:  # delta time
+            i += 1
+        i += 1
+        if track[i] == 0xFF:
+            break
+        messages.append(tuple(track[i:i + 3]))
+        i += 3
+    return messages
+
+
+def test_midi_contains_chords_on_channel_two():
+    settings = MusicSettings(num_notes=16, progression="I–IV–V–I")
+    melody = build_melody(parse_equation("n % 5").func, [], settings)
+    data = midi_bytes(melody, settings)
+    assert struct.unpack(">I", data[18:22])[0] == len(data) - 22
+    messages = _midi_messages(data)
+    chord_ons = [m for m in messages if m[0] == 0x91]
+    assert len(chord_ons) == 3 * len(melody.chords) == 6
+    assert len([m for m in messages if m[0] == 0x81]) == len(chord_ons)
+    assert len([m for m in messages if m[0] == 0x90]) == len(melody.events)
+    assert sorted(m[1] for m in chord_ons) == sorted(p for c in melody.chords for p in c.pitches)

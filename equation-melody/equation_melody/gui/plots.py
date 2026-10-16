@@ -7,12 +7,13 @@ import pyqtgraph as pg
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-from ..core.melody import Melody, midi_to_name, scale_pitches
+from ..core.melody import SCALES, Melody, midi_to_name
 
 _ACCENT = (52, 120, 200)
 _BAND = (200, 120, 40)
 _REST = (200, 60, 60)
 _PLAYHEAD = (220, 50, 50)
+_CHORD = (120, 170, 230, 110)
 
 
 class PlotArea(QWidget):
@@ -41,6 +42,7 @@ class PlotArea(QWidget):
         self.roll_plot.setLabel("bottom", "beats")
         self.roll_plot.showGrid(x=True, y=True, alpha=0.2)
         self._bars: pg.BarGraphItem | None = None
+        self._chord_bars: pg.BarGraphItem | None = None
         self.roll_playhead = pg.InfiniteLine(angle=90, pen=pg.mkPen(_PLAYHEAD, width=2),
                                              movable=False)
         self.roll_plot.addItem(self.roll_playhead)
@@ -86,9 +88,23 @@ class PlotArea(QWidget):
         self.function_plot.enableAutoRange()
 
     def _update_roll(self, melody: Melody) -> None:
-        if self._bars is not None:
-            self.roll_plot.removeItem(self._bars)
-            self._bars = None
+        for bars in (self._bars, self._chord_bars):
+            if bars is not None:
+                self.roll_plot.removeItem(bars)
+        self._bars = self._chord_bars = None
+        chord_notes = [(c.start, c.duration, p) for c in melody.chords for p in c.pitches]
+        if chord_notes:
+            # Pale bars drawn behind the melody, one per chord note, for the full chord length.
+            self._chord_bars = pg.BarGraphItem(
+                x0=[start for start, _, _ in chord_notes],
+                width=[duration for _, duration, _ in chord_notes],
+                y0=[pitch - 0.4 for _, _, pitch in chord_notes],
+                height=[0.8] * len(chord_notes),
+                brush=pg.mkBrush(*_CHORD),
+                pen=pg.mkPen(None),
+            )
+            self._chord_bars.setZValue(-1)
+            self.roll_plot.addItem(self._chord_bars)
         events = melody.events
         if events:
             self._bars = pg.BarGraphItem(
@@ -100,7 +116,14 @@ class PlotArea(QWidget):
                 pen=pg.mkPen(None),
             )
             self.roll_plot.addItem(self._bars)
-        pitches = scale_pitches(melody.settings)
-        self.roll_plot.getAxis("left").setTicks([[(p, midi_to_name(p)) for p in pitches]])
-        self.roll_plot.setYRange(pitches[0] - 1, pitches[-1] + 1, padding=0)
+        settings = melody.settings
+        low = settings.root
+        high = settings.root + 12 * settings.octaves
+        if chord_notes:
+            low = min(low, min(p for _, _, p in chord_notes))
+            high = max(high, max(p for _, _, p in chord_notes))
+        classes = {(settings.root + i) % 12 for i in SCALES[settings.scale]}
+        ticks = [(p, midi_to_name(p)) for p in range(low, high + 1) if p % 12 in classes]
+        self.roll_plot.getAxis("left").setTicks([ticks])
+        self.roll_plot.setYRange(low - 1, high + 1, padding=0)
         self.roll_plot.setXRange(0, max(melody.total_beats, 1e-3), padding=0.01)

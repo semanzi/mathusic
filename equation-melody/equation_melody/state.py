@@ -13,7 +13,7 @@ class MusicSettings:
     n_start: float = 0.0
     n_step: float = 1.0
     root: int = 60  # MIDI note number, 60 is middle C (C4)
-    scale: str = "Major pentatonic"
+    scale: str = "Major"
     octaves: int = 2
     normalisation: str = "Percentile (robust)"
     clip_percent: float = 5.0
@@ -22,6 +22,10 @@ class MusicSettings:
     gate: float = 0.85  # fraction of each step that sounds
     merge_repeats: bool = False
     timbre: str = "Soft square"
+    progression: str = "None"  # "None" adds no chords and leaves the melody unchanged
+    chord_beats: float = 4.0  # length of each chord in beats (4 is one bar of 4/4)
+    chord_octave: int = -1  # chord register relative to the root note, in octaves
+    chord_volume: float = 0.4  # chord level relative to the melody
 
     @property
     def seconds_per_beat(self) -> float:

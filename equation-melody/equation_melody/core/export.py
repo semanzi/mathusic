@@ -32,13 +32,23 @@ def _varlen(value: int) -> bytes:
 
 
 def midi_bytes(melody: Melody, settings: MusicSettings) -> bytes:
-    """Build a single-track Standard MIDI File (format 0)."""
+    """Build a single-track Standard MIDI File (format 0).
+
+    The melody is on channel 1 and chords on channel 2.
+    """
     timed: list[tuple[int, int, bytes]] = []  # (tick, order, message). Note-offs sort first.
     for event in melody.events:
         on = int(round(event.start * TICKS_PER_BEAT))
         off = on + max(int(round(event.duration * settings.gate * TICKS_PER_BEAT)), 1)
         timed.append((on, 1, bytes([0x90, event.pitch, 90])))
         timed.append((off, 0, bytes([0x80, event.pitch, 0])))
+    velocity = int(round(90 * min(max(settings.chord_volume * 1.5, 0.1), 1.0)))
+    for chord in melody.chords:  # chords go on channel 2 so they can be routed separately
+        on = int(round(chord.start * TICKS_PER_BEAT))
+        off = on + max(int(round(chord.duration * TICKS_PER_BEAT)), 1)
+        for pitch in chord.pitches:
+            timed.append((on, 1, bytes([0x91, pitch, velocity])))
+            timed.append((off, 0, bytes([0x81, pitch, 0])))
     timed.sort(key=lambda item: (item[0], item[1]))
 
     tempo = int(round(60_000_000 / settings.tempo))

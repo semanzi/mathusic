@@ -1,6 +1,8 @@
-"""Musical settings that shape how the equation is heard."""
+"""Musical settings that shape how the equation is heard, and the chords beneath it."""
 
 from __future__ import annotations
+
+from dataclasses import replace
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
@@ -13,6 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..core.harmony import CHORD_LENGTHS, NO_PROGRESSION, PROGRESSIONS
 from ..core.melody import NORMALISATION_MODES, SCALES, midi_to_name
 from ..core.synth import TIMBRES
 from ..state import MusicSettings
@@ -109,6 +112,62 @@ class SettingsPanel(QGroupBox):
 
     def _update_clip_enabled(self, mode: str) -> None:
         self.clip.setEnabled(mode.startswith("Percentile"))
+
+
+class HarmonyPanel(QGroupBox):
+    """Chord progression played as a sustained pad beneath the melody."""
+
+    changed = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__("Harmony", parent)
+        d = MusicSettings()
+
+        self.progression = QComboBox()
+        self.progression.addItems(list(PROGRESSIONS))
+        self.progression.setCurrentText(d.progression)
+        self.progression.setToolTip(
+            "Chords are built from the selected scale, so each mode has its own chord qualities. "
+            "The modulating circle of fifths changes key every chord while the melody stays put."
+        )
+        self.chord_length = QComboBox()
+        for label, beats in CHORD_LENGTHS:
+            self.chord_length.addItem(label, beats)
+        self.chord_length.setCurrentIndex(self.chord_length.findData(d.chord_beats))
+        self.chord_length.setToolTip("Bars are four beats long.")
+        self.chord_octave = _int_spin(-3, 1, d.chord_octave)
+        self.chord_octave.setToolTip("Chord register relative to the root note, in octaves.")
+        self.chord_volume = _int_spin(0, 100, int(round(d.chord_volume * 100)))
+        self.chord_volume.setSuffix(" %")
+        self.chord_volume.setToolTip("Chord loudness relative to the melody.")
+
+        form = QFormLayout(self)
+        form.addRow("Progression", self.progression)
+        form.addRow("Chord length", self.chord_length)
+        form.addRow("Chord octave", self.chord_octave)
+        form.addRow("Chord volume", self.chord_volume)
+
+        for spin in (self.chord_octave, self.chord_volume):
+            spin.valueChanged.connect(lambda *_: self.changed.emit())
+        for combo in (self.progression, self.chord_length):
+            combo.currentIndexChanged.connect(lambda *_: self.changed.emit())
+        self.progression.currentTextChanged.connect(self._update_enabled)
+        self._update_enabled(self.progression.currentText())
+
+    def apply(self, settings: MusicSettings) -> MusicSettings:
+        """Return a copy of the musical settings with the harmony settings filled in."""
+        return replace(
+            settings,
+            progression=self.progression.currentText(),
+            chord_beats=float(self.chord_length.currentData()),
+            chord_octave=self.chord_octave.value(),
+            chord_volume=self.chord_volume.value() / 100.0,
+        )
+
+    def _update_enabled(self, progression: str) -> None:
+        active = progression != NO_PROGRESSION
+        for widget in (self.chord_length, self.chord_octave, self.chord_volume):
+            widget.setEnabled(active)
 
 
 def _int_spin(lo: int, hi: int, value: int) -> QSpinBox:

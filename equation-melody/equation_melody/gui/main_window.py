@@ -28,11 +28,12 @@ from PySide6.QtWidgets import (
 from ..audio.player import AUDIO_ERROR, Player
 from ..core.export import write_midi, write_wav
 from ..core.expression import SUPPORTED_SUMMARY, EquationError, ParsedEquation, parse_equation
+from ..core.harmony import loop_fit_message
 from ..core.melody import Melody, build_melody, probe_influence
 from ..core.synth import render_audio
 from .param_panel import ParamPanel
 from .plots import PlotArea
-from .settings_panel import SettingsPanel
+from .settings_panel import HarmonyPanel, SettingsPanel
 
 SAMPLE_RATE = 44100
 
@@ -105,10 +106,12 @@ class MainWindow(QMainWindow):
 
         self.param_panel = ParamPanel()
         self.settings_panel = SettingsPanel()
+        self.harmony_panel = HarmonyPanel()
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.addWidget(self.param_panel)
         left_layout.addWidget(self.settings_panel)
+        left_layout.addWidget(self.harmony_panel)
         left_layout.addStretch(1)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -151,6 +154,7 @@ class MainWindow(QMainWindow):
         self.examples.activated.connect(self._on_example)
         self.param_panel.valuesChanged.connect(lambda: self._render_timer.start())
         self.settings_panel.changed.connect(lambda: self._render_timer.start())
+        self.harmony_panel.changed.connect(lambda: self._render_timer.start())
         self.play_button.clicked.connect(self._toggle_play)
         self.loop_box.toggled.connect(self._on_loop)
         export_midi.clicked.connect(self._export_midi)
@@ -187,7 +191,7 @@ class MainWindow(QMainWindow):
         self._render_timer.stop()
         if self.parsed is None:
             return
-        settings = self.settings_panel.settings()
+        settings = self.harmony_panel.apply(self.settings_panel.settings())
         values = self.param_panel.values()
         melody = build_melody(self.parsed.func, values, settings)
         audio = render_audio(melody, settings, SAMPLE_RATE)
@@ -198,7 +202,9 @@ class MainWindow(QMainWindow):
         ranges = [(p.minimum, p.maximum) for p in self.parsed.params]
         self.param_panel.set_influence(
             probe_influence(self.parsed.func, values, ranges, settings, melody.pitches))
-        self.info.setText(f"{len(melody.events)} notes, {len(audio) / SAMPLE_RATE:.1f} seconds")
+        chords = f", {len(melody.chords)} chords" if melody.chords else ""
+        seconds = len(audio) / SAMPLE_RATE
+        self.info.setText(f"{len(melody.events)} notes{chords}, {seconds:.1f} seconds")
         self._report(melody)
 
     def _report(self, melody: Melody) -> None:
@@ -220,6 +226,10 @@ class MainWindow(QMainWindow):
             level = "warn"
         elif norm.flat:
             messages.append("Every step gives the same value, so the melody is one repeated note.")
+            level = "warn"
+        fit = loop_fit_message(melody.settings)
+        if fit:
+            messages.append(fit)
             level = "warn"
         self._set_status(" ".join(messages), level)
 
